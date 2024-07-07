@@ -39,9 +39,9 @@ in
   config = lib.mkIf cfg.enable {
     processManagerCommand = ''
       ${cfg.package}/bin/process-compose --config ${cfg.configFile} \
-        --port ''${PC_HTTP_PORT:-${toString config.process.process-compose.port}} \
-        --tui=''${PC_TUI_ENABLED:-${toString config.process.process-compose.tui}} \
-        up "$@" &
+        --unix-socket ''${PC_SOCKET_PATH:-${toString config.process.process-compose.unix-socket}} \
+        --tui=''${PC_TUI_ENABLED:-${lib.boolToString config.process.process-compose.tui}} \
+        -U up "$@" &
     '';
 
     packages = [ cfg.package ];
@@ -50,13 +50,14 @@ in
       configFile = settingsFormat.generate "process-compose.yaml" cfg.settings;
       settings = {
         version = "0.5";
+        is_strict = true;
         port = lib.mkDefault 9999;
         tui = lib.mkDefault true;
         environment = lib.mapAttrsToList
           (name: value: "${name}=${toString value}")
           config.env;
         processes = lib.mapAttrs
-          (name: value: { command = value.exec; } // value.process-compose)
+          (name: value: { command = "exec ${pkgs.writeShellScript name value.exec}"; } // value.process-compose)
           config.processes;
       };
     };

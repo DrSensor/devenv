@@ -1,18 +1,14 @@
-{ pkgs, config, lib, inputs, ... }:
+{ pkgs, config, lib, ... }:
 
 let
   cfg = config.languages.ruby;
 
-  nixpkgs-ruby = inputs.nixpkgs-ruby or (throw ''
-    To use languages.ruby.version or languages.ruby.versionFile, you need to add the following to your devenv.yaml:
-    
-      inputs:
-        nixpkgs-ruby:
-          url: github:bobvanderlinden/nixpkgs-ruby
-          inputs:
-            nixpkgs:
-              follows: nixpkgs
-  '');
+  nixpkgs-ruby = config.lib.getInput {
+    name = "nixpkgs-ruby";
+    url = "github:bobvanderlinden/nixpkgs-ruby";
+    attribute = "languages.ruby.version or languages.ruby.versionFile";
+    follows = [ "nixpkgs" ];
+  };
 in
 {
   options.languages.ruby = {
@@ -108,8 +104,8 @@ in
       let libdir = cfg.package.version.libDir;
       in
       ''
-        export RUBYLIB="$DEVENV_PROFILE/${libdir}:$DEVENV_PROFILE/lib/ruby/site_ruby:$DEVENV_PROFILE/lib/ruby/site_ruby/${libdir}:$DEVENV_PROFILE/lib/ruby/site_ruby/${libdir}/${pkgs.stdenv.system}:$RUBYLIB"
-        export GEM_PATH="$GEM_HOME/gems:$GEM_PATH"
+        export RUBYLIB="$DEVENV_PROFILE/${libdir}:$DEVENV_PROFILE/lib/ruby/site_ruby:$DEVENV_PROFILE/lib/ruby/site_ruby/${libdir}:$DEVENV_PROFILE/lib/ruby/site_ruby/${libdir}/${pkgs.stdenv.system}:''${RUBYLIB:-}"
+        export GEM_PATH="$GEM_HOME/gems:''${GEM_PATH:-}"
         export PATH="$GEM_HOME/bin:$PATH"
       '';
   };

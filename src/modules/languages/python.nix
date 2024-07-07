@@ -1,62 +1,118 @@
-{ pkgs, config, lib, inputs, ... }:
+{ pkgs, config, lib, ... }:
 
 let
   cfg = config.languages.python;
+  libraries = lib.makeLibraryPath (
+    cfg.libraries
+    ++ (lib.optional cfg.manylinux.enable pkgs.pythonManylinuxPackages.manylinux2014Package)
+    # see https://matrix.to/#/!kjdutkOsheZdjqYmqp:nixos.org/$XJ5CO4bKMevYzZq_rrNo64YycknVFJIJTy6hVCJjRlA?via=nixos.org&via=matrix.org&via=nixos.dev
+    ++ [ pkgs.stdenv.cc.cc.lib ]
+  );
 
-  nixpkgs-python = inputs.nixpkgs-python or (throw ''
-    To use languages.python.version, you need to add the following to your devenv.yaml:
+  readlink = "${pkgs.coreutils}/bin/readlink -f ";
+  package = pkgs.callPackage "${pkgs.path}/pkgs/development/interpreters/python/wrapper.nix" {
+    python = cfg.package;
+    requiredPythonModules = cfg.package.pkgs.requiredPythonModules;
+    makeWrapperArgs = [
+      "--prefix"
+      "LD_LIBRARY_PATH"
+      ":"
+      libraries
+    ] ++ lib.optionals pkgs.stdenv.isDarwin [
+      "--prefix"
+      "DYLD_LIBRARY_PATH"
+      ":"
+      libraries
+    ];
+  };
 
-      inputs:
-        nixpkgs-python:
-          url: github:cachix/nixpkgs-python
-  '');
+  requirements = pkgs.writeText "requirements.txt" (
+    if lib.isPath cfg.venv.requirements
+    then builtins.readFile cfg.venv.requirements
+    else cfg.venv.requirements
+  );
+
+  nixpkgs-python = config.lib.getInput {
+    name = "nixpkgs-python";
+    url = "github:cachix/nixpkgs-python";
+    attribute = "languages.python.version";
+    follows = [ "nixpkgs" ];
+  };
 
   initVenvScript = pkgs.writeShellScript "init-venv.sh" ''
-    # Make sure any tools are not attempting to use the python interpreter from any
+    # Make sure any tools are not attempting to use the Python interpreter from any
     # existing virtual environment. For instance if devenv was started within an venv.
     unset VIRTUAL_ENV
 
-    VENV_PATH="${config.env.DEVENV_STATE}/venv"
+    VENV_PATH="${config.env.DEVENV_STATE}/${lib.optionalString (cfg.directory != config.devenv.root) ''"${cfg.directory}/"''}venv"
 
-    if [ ! -L "$VENV_PATH"/devenv-profile ] \
-    || [ "$(${pkgs.coreutils}/bin/readlink "$VENV_PATH"/devenv-profile)" != "${config.devenv.profile}" ]
+    profile_python="$(${readlink} ${package.interpreter})"
+    devenv_interpreter_path="$(${pkgs.coreutils}/bin/cat "$VENV_PATH/.devenv_interpreter" 2> /dev/null || echo false )"
+    venv_python="$(${readlink} "$devenv_interpreter_path")"
+    requirements="${lib.optionalString (cfg.venv.requirements != null) ''${requirements}''}"
+
+    # recreate venv if necessary
+    if [ -z $venv_python ] || [ $profile_python != $venv_python ]
     then
-      if [ -d "$VENV_PATH" ]
-      then
-        echo "Rebuilding Python venv..."
-        ${pkgs.coreutils}/bin/rm -rf "$VENV_PATH"
-      fi
+      echo "Python interpreter changed, rebuilding Python venv..."
+      ${pkgs.coreutils}/bin/rm -rf "$VENV_PATH"
       ${lib.optionalString cfg.poetry.enable ''
         [ -f "${config.env.DEVENV_STATE}/poetry.lock.checksum" ] && rm ${config.env.DEVENV_STATE}/poetry.lock.checksum
       ''}
-      ${cfg.package.interpreter} -m venv "$VENV_PATH"
-      ${pkgs.coreutils}/bin/ln -sf ${config.devenv.profile} "$VENV_PATH"/devenv-profile
+      ${if cfg.uv.enable then ''
+        echo uv venv "$VENV_PATH"
+        uv venv "$VENV_PATH"
+      ''
+      else ''
+          echo ${package.interpreter} -m venv ${if builtins.isNull cfg.version || lib.versionAtLeast cfg.version "3.9" then "--upgrade-deps" else ""} "$VENV_PATH"
+          ${package.interpreter} -m venv ${if builtins.isNull cfg.version || lib.versionAtLeast cfg.version "3.9" then "--upgrade-deps" else ""} "$VENV_PATH"
+        ''
+      }
+      echo "${package.interpreter}" > "$VENV_PATH/.devenv_interpreter"
     fi
+
     source "$VENV_PATH"/bin/activate
-    ${lib.optionalString (cfg.venv.requirements != null) ''
-      "$VENV_PATH"/bin/pip install -r ${pkgs.writeText "requirements.txt" cfg.venv.requirements}
-    ''}
+
+    # reinstall requirements if necessary
+    if [ -n "$requirements" ]
+      then
+        devenv_requirements_path="$(${pkgs.coreutils}/bin/cat "$VENV_PATH/.devenv_requirements" 2> /dev/null|| echo false )"
+        devenv_requirements="$(${readlink} "$devenv_requirements_path")"
+        if [ -z $devenv_requirements ] || [ $devenv_requirements != $requirements ]
+          then
+            echo "${requirements}" > "$VENV_PATH/.devenv_requirements"
+            ${if cfg.uv.enable then ''
+              echo "Requirements changed, running uv pip install -r ${requirements}..."
+              uv pip install -r ${requirements}
+            ''
+            else ''
+                echo "Requirements changed, running pip install -r ${requirements}..."
+                "$VENV_PATH"/bin/pip install -r ${requirements}
+              ''
+            }
+       fi
+    fi
   '';
 
   initPoetryScript = pkgs.writeShellScript "init-poetry.sh" ''
-    function _devenv-init-poetry-venv()
+    function _devenv_init_poetry_venv
     {
-      # Make sure any tools are not attempting to use the python interpreter from any
+      # Make sure any tools are not attempting to use the Python interpreter from any
       # existing virtual environment. For instance if devenv was started within an venv.
       unset VIRTUAL_ENV
 
-      # Make sure poetry's venv uses the configured python executable.
-      ${cfg.poetry.package}/bin/poetry env use --no-interaction --quiet ${cfg.package.interpreter}
+      # Make sure poetry's venv uses the configured Python executable.
+      ${cfg.poetry.package}/bin/poetry env use --no-interaction --quiet ${package.interpreter}
     }
 
-    function _devenv-poetry-install()
+    function _devenv_poetry_install
     {
-      local POETRY_INSTALL_COMMAND=(${cfg.poetry.package}/bin/poetry install --no-interaction ${lib.concatStringsSep " " cfg.poetry.install.arguments})
+      local POETRY_INSTALL_COMMAND=(${cfg.poetry.package}/bin/poetry install --no-interaction ${lib.concatStringsSep " " cfg.poetry.install.arguments} ${lib.optionalString (cfg.directory != config.devenv.root) ''--directory=${cfg.directory}''})
       # Avoid running "poetry install" for every shell.
-      # Only run it when the "poetry.lock" file or python interpreter has changed.
+      # Only run it when the "poetry.lock" file or Python interpreter has changed.
       # We do this by storing the interpreter path and a hash of "poetry.lock" in venv.
-      local ACTUAL_POETRY_CHECKSUM="${cfg.package.interpreter}:$(${pkgs.nix}/bin/nix-hash --type sha256 pyproject.toml):$(${pkgs.nix}/bin/nix-hash --type sha256 poetry.lock):''${POETRY_INSTALL_COMMAND[@]}"
-      local POETRY_CHECKSUM_FILE="$DEVENV_ROOT"/.venv/poetry.lock.checksum
+      local ACTUAL_POETRY_CHECKSUM="${package.interpreter}:$(${pkgs.nix}/bin/nix-hash --type sha256 "$DEVENV_ROOT"/${lib.optionalString (cfg.directory != config.devenv.root) ''${cfg.directory}/''}pyproject.toml):$(${pkgs.nix}/bin/nix-hash --type sha256 "$DEVENV_ROOT"/${lib.optionalString (cfg.directory != config.devenv.root) ''${cfg.directory}/''}poetry.lock):''${POETRY_INSTALL_COMMAND[@]}"
+      local POETRY_CHECKSUM_FILE="$DEVENV_ROOT"/${lib.optionalString (cfg.directory != config.devenv.root) ''${cfg.directory}/''}.venv/poetry.lock.checksum
       if [ -f "$POETRY_CHECKSUM_FILE" ]
       then
         read -r EXPECTED_POETRY_CHECKSUM < "$POETRY_CHECKSUM_FILE"
@@ -75,16 +131,16 @@ let
       fi
     }
 
-    if [ ! -f pyproject.toml ]
+    if [ ! -f "$DEVENV_ROOT"/${lib.optionalString (cfg.directory != config.devenv.root) ''${cfg.directory}/''}pyproject.toml ]
     then
       echo "No pyproject.toml found. Run 'poetry init' to create one." >&2
     else
-      _devenv-init-poetry-venv
+      _devenv_init_poetry_venv
       ${lib.optionalString cfg.poetry.install.enable ''
-        _devenv-poetry-install
+        _devenv_poetry_install
       ''}
       ${lib.optionalString cfg.poetry.activate.enable ''
-        source "$DEVENV_ROOT"/.venv/bin/activate
+        source "$DEVENV_ROOT"/${lib.optionalString (cfg.directory != config.devenv.root) ''${cfg.directory}/''}.venv/bin/activate
       ''}
     fi
   '';
@@ -100,6 +156,31 @@ in
       description = "The Python package to use.";
     };
 
+    manylinux.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = pkgs.stdenv.isLinux;
+      description = ''
+        Whether to install manylinux2014 libraries.
+
+        Enabled by default on linux;
+
+        This is useful when you want to use Python wheels that depend on manylinux2014 libraries.
+      '';
+    };
+
+    libraries = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ "${config.devenv.dotfile}/profile" ];
+      defaultText = lib.literalExpression ''
+        [ "''${config.devenv.dotfile}/profile" ]
+      '';
+      description = ''
+        Additional libraries to make available to the Python interpreter.
+
+        This is useful when you want to use Python wheels that depend on native libraries.
+      '';
+    };
+
     version = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -110,15 +191,42 @@ in
       example = "3.11 or 3.11.2";
     };
 
+    directory = lib.mkOption {
+      type = lib.types.str;
+      default = config.devenv.root;
+      defaultText = lib.literalExpression "config.devenv.root";
+      description = ''
+        The Python project's root directory. Defaults to the root of the devenv project.
+        Can be an absolute path or one relative to the root of the devenv project.
+      '';
+      example = "./directory";
+    };
+
     venv.enable = lib.mkEnableOption "Python virtual environment";
 
     venv.requirements = lib.mkOption {
-      type = lib.types.nullOr lib.types.lines;
+      type = lib.types.nullOr (lib.types.either lib.types.lines lib.types.path);
       default = null;
       description = ''
         Contents of pip requirements.txt file.
         This is passed to `pip install -r` during `devenv shell` initialisation.
       '';
+    };
+
+    venv.quiet = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether `pip install` should avoid outputting messages during devenv initialisation.";
+    };
+
+    uv = {
+      enable = lib.mkEnableOption "uv";
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.uv;
+        defaultText = lib.literalExpression "pkgs.uv";
+        description = "The uv package to use.";
+      };
     };
 
     poetry = {
@@ -136,6 +244,16 @@ in
           default = false;
           description = "Whether the root package (your project) should be installed. See `--no-root`";
         };
+        onlyInstallRootPackage = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether to only install the root package (your project) should be installed, but no dependencies. See `--only-root`";
+        };
+        compile = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether `poetry install` should compile Python source files to bytecode.";
+        };
         quiet = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -144,7 +262,17 @@ in
         groups = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [ ];
-          description = "Which dependency-groups to install. See `--with`.";
+          description = "Which dependency groups to install. See `--with`.";
+        };
+        ignoredGroups = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Which dependency groups to ignore. See `--without`.";
+        };
+        onlyGroups = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Which dependency groups to exclusively install. See `--only`.";
         };
         extras = lib.mkOption {
           type = lib.types.listOf lib.types.str;
@@ -156,9 +284,17 @@ in
           default = false;
           description = "Whether to install all extras. See `--all-extras`.";
         };
+        verbosity = lib.mkOption {
+          type = lib.types.enum [ "no" "little" "more" "debug" ];
+          default = "no";
+          description = "What level of verbosity the output of `poetry install` should have.";
+        };
       };
-      activate.enable = lib.mkEnableOption "activate the poetry virtual environment automatically";
-
+      activate.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether to activate the poetry virtual environment automatically.";
+      };
       package = lib.mkOption {
         type = lib.types.package;
         default = pkgs.poetry;
@@ -171,21 +307,31 @@ in
   config = lib.mkIf cfg.enable {
     languages.python.poetry.install.enable = lib.mkIf cfg.poetry.enable (lib.mkDefault true);
     languages.python.poetry.install.arguments =
-      lib.optional (!cfg.poetry.install.installRootPackage) "--no-root" ++
+      lib.optional cfg.poetry.install.onlyInstallRootPackage "--only-root" ++
+      lib.optional (!cfg.poetry.install.installRootPackage && !cfg.poetry.install.onlyInstallRootPackage) "--no-root" ++
+      lib.optional cfg.poetry.install.compile "--compile" ++
       lib.optional cfg.poetry.install.quiet "--quiet" ++
       lib.optionals (cfg.poetry.install.groups != [ ]) [ "--with" ''"${lib.concatStringsSep "," cfg.poetry.install.groups}"'' ] ++
+      lib.optionals (cfg.poetry.install.ignoredGroups != [ ]) [ "--without" ''"${lib.concatStringsSep "," cfg.poetry.install.ignoredGroups}"'' ] ++
+      lib.optionals (cfg.poetry.install.onlyGroups != [ ]) [ "--only" ''"${lib.concatStringsSep " " cfg.poetry.install.onlyGroups}"'' ] ++
       lib.optionals (cfg.poetry.install.extras != [ ]) [ "--extras" ''"${lib.concatStringsSep " " cfg.poetry.install.extras}"'' ] ++
-      lib.optional cfg.poetry.install.allExtras "--all-extras";
+      lib.optional cfg.poetry.install.allExtras "--all-extras" ++
+      lib.optional (cfg.poetry.install.verbosity == "little") "-v" ++
+      lib.optional (cfg.poetry.install.verbosity == "more") "-vv" ++
+      lib.optional (cfg.poetry.install.verbosity == "debug") "-vvv";
 
     languages.python.poetry.activate.enable = lib.mkIf cfg.poetry.enable (lib.mkDefault true);
 
     languages.python.package = lib.mkMerge [
-      (lib.mkIf (cfg.version != null) (nixpkgs-python.packages.${pkgs.stdenv.system}.${cfg.version} or (throw "Unsupported Python version, see https://github.com/cachix/nixpkgs-python#supported-python-versions")))
+      (lib.mkIf (cfg.version != null)
+        (nixpkgs-python.packages.${pkgs.stdenv.system}.${cfg.version} or (throw "Unsupported Python version, see https://github.com/cachix/nixpkgs-python#supported-python-versions")))
     ];
 
-    packages = [
-      cfg.package
-    ] ++ (lib.optional cfg.poetry.enable cfg.poetry.package);
+    cachix.pull = lib.mkIf (cfg.version != null) [ "nixpkgs-python" ];
+
+    packages = [ package ]
+      ++ (lib.optional cfg.poetry.enable cfg.poetry.package)
+      ++ (lib.optional cfg.uv.enable cfg.uv.package);
 
     env = lib.optionalAttrs cfg.poetry.enable {
       # Make poetry use DEVENV_ROOT/.venv
@@ -198,7 +344,7 @@ in
 
     enterShell = lib.concatStringsSep "\n" ([
       ''
-        export PYTHONPATH="$DEVENV_PROFILE/${cfg.package.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
+        export PYTHONPATH="$DEVENV_PROFILE/${package.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
       ''
     ] ++
     (lib.optional cfg.venv.enable ''

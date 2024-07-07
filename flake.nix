@@ -1,12 +1,12 @@
 {
-  description = "devenv - Developer Environments";
+  description = "devenv.sh - Fast, Declarative, Reproducible, and Composable Developer Environments";
 
   nixConfig = {
     extra-trusted-public-keys = "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=";
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  inputs.nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
   inputs.pre-commit-hooks = {
     url = "github:cachix/pre-commit-hooks.nix";
     inputs = {
@@ -19,17 +19,27 @@
     flake = false;
   };
   inputs.nix = {
-    url = "github:domenkozar/nix/relaxed-flakes";
-    inputs.nixpkgs.follows = "nixpkgs";
+    url = "github:domenkozar/nix/devenv-2.21";
+    inputs = {
+      nixpkgs.follows = "nixpkgs";
+      flake-compat.follows = "flake-compat";
+    };
   };
+  inputs.cachix = {
+    url = "github:cachix/cachix";
+    inputs = {
+      nixpkgs.follows = "nixpkgs";
+      pre-commit-hooks.follows = "pre-commit-hooks";
+      flake-compat.follows = "flake-compat";
+    };
+  };
+
 
   outputs = { self, nixpkgs, pre-commit-hooks, nix, ... }@inputs:
     let
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f: builtins.listToAttrs (map (name: { inherit name; value = f name; }) systems);
-      mkPackage = pkgs: import ./src/devenv.nix {
-        inherit pkgs nix;
-      };
+      mkPackage = pkgs: import ./package.nix { inherit pkgs inputs; };
       mkDevShellPackage = config: pkgs: import ./src/devenv-devShell.nix { inherit config pkgs; };
       mkDocOptions = pkgs:
         let
@@ -63,19 +73,25 @@
             );
           };
         in
-        options.optionsCommonMark;
+        options;
+
     in
     {
       packages = forAllSystems (system:
-        let pkgs = nixpkgs.legacyPackages.${system};
-        in {
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          options = mkDocOptions pkgs;
+        in
+        {
           default = self.packages.${system}.devenv;
-
           devenv = mkPackage pkgs;
-          devenv-docs-options = mkDocOptions pkgs;
+          devenv-docs-options = options.optionsCommonMark;
+          devenv-docs-options-json = options.optionsJSON;
         });
 
       modules = ./src/modules;
+      isTmpDir = true;
+      hasIsTesting = true;
 
       templates =
         let
@@ -151,6 +167,10 @@
             ci = config.ciDerivation;
             inherit config;
           };
+      };
+
+      overlays.default = final: prev: {
+        devenv = self.packages.${prev.system}.default;
       };
     };
 }

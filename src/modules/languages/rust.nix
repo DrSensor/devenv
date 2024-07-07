@@ -1,17 +1,14 @@
-{ pkgs, config, lib, inputs, ... }:
+{ pkgs, config, lib, ... }:
 
 let
   cfg = config.languages.rust;
-  setup = ''
-    inputs:
-      fenix:
-        url: github:nix-community/fenix
-        inputs:
-          nixpkgs:
-            follows: nixpkgs
-  '';
 
-  error = dbg: "To use languages.rust.${dbg}, you need to add the following to your devenv.yaml:\n\n${setup}";
+  fenix = config.lib.getInput {
+    name = "fenix";
+    url = "github:nix-community/fenix";
+    attribute = "languages.rust.version";
+    follows = [ "nixpkgs" ];
+  };
 in
 {
   imports = [
@@ -32,11 +29,39 @@ in
       '';
     };
 
+    targets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      defaultText = lib.literalExpression ''[ ]'';
+      description = ''
+        List of extra [targets](https://github.com/nix-community/fenix#supported-platforms-and-targets)
+        to install. Defaults to only the native target. 
+      '';
+    };
+
     channel = lib.mkOption {
       type = lib.types.enum [ "nixpkgs" "stable" "beta" "nightly" ];
       default = "nixpkgs";
       defaultText = lib.literalExpression ''"nixpkgs"'';
       description = "The rustup toolchain to install.";
+    };
+
+    rustflags = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Extra flags to pass to the Rust compiler.";
+    };
+
+    mold.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = pkgs.stdenv.isLinux && pkgs.stdenv.isx86_64 && cfg.targets == [ ];
+      defaultText =
+        lib.literalExpression "pkgs.stdenv.isLinux && pkgs.stdenv.isx86_64 && languages.rust.targets == [ ]";
+      description = ''
+        Enable mold as the linker.
+
+        Enabled by default on x86_64 Linux machines when no cross-compilation targets are specified.
+      '';
     };
 
     toolchain = lib.mkOption {
@@ -61,46 +86,92 @@ in
     };
   };
 
-  config = lib.mkMerge [
-    (lib.mkIf cfg.enable {
-      packages = (builtins.map (c: cfg.toolchain.${c} or (throw (error "toolchain.${c}"))) cfg.components)
-        ++ lib.optional pkgs.stdenv.isDarwin pkgs.libiconv;
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    (
+      let
+        mkOverrideTools = lib.mkOverride (lib.modules.defaultOverridePriority - 1);
+      in
+      {
+        assertions = [
+          {
+            assertion = cfg.channel == "nixpkgs" -> (cfg.targets == [ ]);
+            message = ''
+              Cannot use `languages.rust.channel = "nixpkgs"` with `languages.rust.targets`.
 
-      # enable compiler tooling by default to expose things like cc
-      languages.c.enable = lib.mkDefault true;
+              The nixpkgs channel does not support cross-compiling with targets.
+              Use the stable, beta, or nightly channels instead. For example:
 
-      # RUST_SRC_PATH is necessary when rust-src is not at the same location as
-      # as rustc. This is the case with the rust toolchain from nixpkgs.
-      env.RUST_SRC_PATH =
-        if cfg.toolchain ? rust-src
-        then "${cfg.toolchain.rust-src}/lib/rustlib/src/rust/library"
-        else pkgs.rustPlatform.rustLibSrc;
+              languages.rust.channel = "stable";
+            '';
+          }
+        ];
 
-      pre-commit.tools.cargo = lib.mkDefault cfg.toolchain.cargo or null;
-      pre-commit.tools.rustfmt = lib.mkDefault cfg.toolchain.rustfmt or null;
-      pre-commit.tools.clippy = lib.mkDefault cfg.toolchain.clippy or null;
+        # Set $CARGO_INSTALL_ROOT so that executables installed by `cargo install` can be found from $PATH
+        enterShell = ''
+          export CARGO_INSTALL_ROOT=$(${
+            lib.strings.escapeShellArgs [
+              "${pkgs.coreutils}/bin/realpath"
+              "--no-symlinks"
+              "${config.devenv.state}/cargo-install"
+            ]
+          })
+          export PATH="$PATH:$CARGO_INSTALL_ROOT/bin"
+        '';
+
+        packages =
+          lib.optional cfg.mold.enable pkgs.mold-wrapped
+          ++ lib.optional pkgs.stdenv.isDarwin pkgs.libiconv;
+
+        # enable compiler tooling by default to expose things like cc
+        languages.c.enable = lib.mkDefault true;
+
+        env =
+          let
+            darwinFlags = lib.optionalString pkgs.stdenv.isDarwin "-L framework=${config.devenv.profile}/Library/Frameworks";
+            moldFlags = lib.optionalString cfg.mold.enable "-C link-arg=-fuse-ld=mold";
+          in
+          {
+            # RUST_SRC_PATH is necessary when rust-src is not at the same location as
+            # as rustc. This is the case with the rust toolchain from nixpkgs.
+            RUST_SRC_PATH =
+              if cfg.toolchain ? rust-src
+              then "${cfg.toolchain.rust-src}/lib/rustlib/src/rust/library"
+              else pkgs.rustPlatform.rustLibSrc;
+            RUSTFLAGS = "${darwinFlags} ${moldFlags} ${cfg.rustflags}";
+            RUSTDOCFLAGS = "${darwinFlags} ${moldFlags}";
+            CFLAGS = lib.optionalString pkgs.stdenv.isDarwin "-iframework ${config.devenv.profile}/Library/Frameworks";
+          };
+
+        pre-commit.tools.cargo = mkOverrideTools cfg.toolchain.cargo or null;
+        pre-commit.tools.rustfmt = mkOverrideTools cfg.toolchain.rustfmt or null;
+        pre-commit.tools.clippy = mkOverrideTools cfg.toolchain.clippy or null;
+      }
+    )
+
+    (lib.mkIf (cfg.channel == "nixpkgs") {
+      packages = builtins.map (c: cfg.toolchain.${c} or (throw "toolchain.${c}")) cfg.components;
     })
-    (lib.mkIf (cfg.enable && pkgs.stdenv.isDarwin) {
-      env.RUSTFLAGS = [ "-L framework=${config.devenv.profile}/Library/Frameworks" ];
-      env.RUSTDOCFLAGS = [ "-L framework=${config.devenv.profile}/Library/Frameworks" ];
-      env.CFLAGS = [ "-iframework ${config.devenv.profile}/Library/Frameworks" ];
-    })
+
     (lib.mkIf (cfg.channel != "nixpkgs") (
       let
-        err = error "channel";
-        fenix = inputs.fenix or (throw err);
-        rustPackages = fenix.packages.${pkgs.stdenv.system} or (throw err);
+        rustPackages = fenix.packages.${pkgs.stdenv.system};
+        fenixChannel =
+          if cfg.channel == "nightly"
+          then "latest"
+          else cfg.channel;
+        toolchain = rustPackages.${fenixChannel};
       in
       {
         languages.rust.toolchain =
-          let
-            toolchain =
-              if cfg.channel == "nightly"
-              then rustPackages.latest
-              else rustPackages.${cfg.channel};
-          in
           (builtins.mapAttrs (_: pkgs.lib.mkDefault) toolchain);
+
+        packages = [
+          (rustPackages.combine (
+            (map (c: toolchain.${c}) cfg.components) ++
+            (map (t: rustPackages.targets.${t}.${fenixChannel}.rust-std) cfg.targets)
+          ))
+        ];
       }
     ))
-  ];
+  ]);
 }

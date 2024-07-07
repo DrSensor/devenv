@@ -1,22 +1,18 @@
-{ pkgs, config, lib, inputs, ... }:
+{ pkgs, config, lib, ... }:
 
 with lib;
 
 let
-  inherit (lib.attrsets) attrValues genAttrs;
+  inherit (lib.attrsets) attrValues;
 
   cfg = config.languages.php;
 
-  setup = ''
-    inputs:
-      phps:
-        url: github:fossar/nix-phps
-        inputs:
-          nixpkgs:
-            follows: nixpkgs
-  '';
-
-  phps = inputs.phps or (throw "To use languages.php.version, you need to add the following to your devenv.yaml:\n\n${setup}");
+  phps = config.lib.getInput {
+    name = "phps";
+    url = "github:fossar/nix-phps";
+    attribute = "languages.php.version";
+    follows = [ "nixpkgs" ];
+  };
 
   filterDefaultExtensions = ext: builtins.length (builtins.filter (inner: inner == ext.extensionName) cfg.disableExtensions) == 0;
 
@@ -78,7 +74,7 @@ let
 
             This option is read-only and managed by NixOS.
           '';
-          example = "${runtimeDir}/<name>.sock";
+          example = literalExpression ''config.env.DEVENV_STATE + "/php-fpm/<name>.sock"'';
         };
 
         listen = mkOption {
@@ -240,16 +236,21 @@ in
         default = {
           error_log = config.env.DEVENV_STATE + "/php-fpm/php-fpm.log";
         };
+        defaultText = literalExpression ''
+          {
+            error_log = config.env.DEVENV_STATE + "/php-fpm/php-fpm.log";
+          }
+        '';
         description = ''
           PHP-FPM global directives. 
-          
+
           Refer to the "List of global php-fpm.conf directives" section of
           <https://www.php.net/manual/en/install.fpm.configuration.php>
           for details. 
-          
+
           Note that settings names must be enclosed in
           quotes (e.g. `"pm.max_children"` instead of `pm.max_children`). 
-          
+
           You need not specify the options `error_log` or `daemonize` here, since
           they are already set.
         '';

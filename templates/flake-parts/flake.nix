@@ -2,7 +2,11 @@
   description = "Description for the project";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    devenv-root = {
+      url = "file+file:///dev/null";
+      flake = false;
+    };
+    nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
     devenv.url = "github:cachix/devenv";
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
@@ -14,7 +18,7 @@
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  outputs = inputs@{ flake-parts, ... }:
+  outputs = inputs@{ flake-parts, devenv-root, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.devenv.flakeModule
@@ -30,6 +34,12 @@
         packages.default = pkgs.hello;
 
         devenv.shells.default = {
+          devenv.root =
+            let
+              devenvRootFileContent = builtins.readFile devenv-root.outPath;
+            in
+            pkgs.lib.mkIf (devenvRootFileContent != "") devenvRootFileContent;
+
           name = "my-project";
 
           imports = [
@@ -44,6 +54,8 @@
           enterShell = ''
             hello
           '';
+
+          processes.hello.exec = "hello";
         };
 
       };

@@ -9,6 +9,7 @@
     ```
     sh <(curl -L https://nixos.org/nix/install) --daemon
     ```
+
 === "macOS"
 
     ```
@@ -16,7 +17,7 @@
     ```
 
 === "Windows (WSL2)"
-   
+
     ```
     sh <(curl -L https://nixos.org/nix/install) --no-daemon
     ```
@@ -27,47 +28,34 @@
     docker run -it nixos/nix
     ```
 
-### 2. Install [Cachix](https://cachix.org)
+!!! note
 
-Recommended, speeds up the installation by providing binaries.
-
-=== "Newcomers"
+    We recommended that you use the experimental installer on macOS to avoid issues with Apple Silicon chips:
 
     ```
-    nix-env -iA cachix -f https://cachix.org/api/v1/install
-    cachix use devenv
+    curl -L https://raw.githubusercontent.com/NixOS/experimental-nix-installer/main/nix-installer.sh | sh -s install
     ```
 
-=== "Flake profiles"
-
-    ```
-    nix profile install nixpkgs#cachix
-    cachix use devenv
-    ```
-
-### 3. Install [devenv](https://github.com/cachix/devenv)
+### 2. Install [devenv](https://github.com/cachix/devenv)
 
 
 === "Newcomers"
 
     ```
-    nix-env -if https://install.devenv.sh/latest
+    nix-env -iA devenv -f https://github.com/NixOS/nixpkgs/tarball/nixpkgs-unstable
     ```
 
-=== "Flake profiles"
+=== "Nix profiles (requires experimental flags)"
 
     ```
-    nix profile install --accept-flake-config tarball+https://install.devenv.sh/latest
+    nix profile install --accept-flake-config nixpkgs#devenv
     ```
-=== "Declaratively using flakes"
 
-    See [Using flakes](../guides/using-with-flakes)
-
-=== "Declaratively without flakes"
+=== "NixOS/nix-darwin/home-manager"
 
     ```nix title="configuration.nix"
     environment.systemPackages = [ 
-      (import (fetchTarball https://install.devenv.sh/latest)).default
+      pkgs.devenv
     ];
     ```
 
@@ -82,18 +70,17 @@ Given a Git repository, create the initial structure:
 
 ```shell-session
 $ devenv init
-Creating .envrc
-Creating devenv.nix
-Creating devenv.yaml
-Appending .devenv* to .gitignore
-Done.
+• Creating .envrc
+• Creating devenv.nix
+• Creating devenv.yaml
+• Creating .gitignore
 ```
 
 ## Commands
 
-- ``devenv ci`` builds your developer environment and makes sure that all checks pass. Useful to run in your continuous integration environment.
+- ``devenv test`` builds your developer environment and makes sure that all checks pass. Useful to run in your continuous integration environment.
 - ``devenv shell`` activates your developer environment.
-- ``devenv search NAME`` searches packages matching NAME in Nixpkgs input.
+- ``devenv search <NAME>`` searches packages matching NAME in Nixpkgs input.
 - ``devenv update`` updates and pins inputs from ``devenv.yaml`` into ``devenv.lock``.
 - ``devenv gc`` [deletes unused environments](garbage-collection.md) to save disk space.
 - ``devenv up`` starts [processes](processes.md).

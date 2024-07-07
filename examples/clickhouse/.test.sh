@@ -1,6 +1,6 @@
-#!/bin/sh
-set -ex
-pkill clickhouse
-devenv up&
-timeout 20 bash -c 'until echo > /dev/tcp/localhost/9000; do sleep 0.5; done'
+#!/usr/bin/env bash
+set -xe
+
+wait_for_port 9000
+sleep 2
 clickhouse-client --query "SELECT 1"

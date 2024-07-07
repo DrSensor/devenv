@@ -1,11 +1,6 @@
 #!/bin/sh
 set -x
 
-# Start the services in the background and store the PID
-echo "Starting temporal service..."
-devenv up &
-DEVENV_PID=$!
-
 export TEMPORAL_ADDRESS=127.0.0.1:17233
 
 # temporal status and store its exit status
@@ -16,6 +11,7 @@ check_temporal_status() {
 }
 
 # Continuously check temporal status until it returns successfully (up to a maximum of 20 times)
+# shellcheck disable=SC2034
 for i in $(seq 1 20); do
 	check_temporal_status
 	if [ $TEMPORAL_EXIT_STATUS -eq 0 ]; then
@@ -34,9 +30,5 @@ echo "Startup complete..."
 temporal operator cluster system
 echo "$TEMPORAL_OUTPUT"
 
-# Clean up by terminating all spawned processes
-pkill -P $DEVENV_PID
-wait $DEVENV_PID&>/dev/null
-
 # Exit the script
-exit $TEMPORAL_EXIT_STATUS
+exit "$TEMPORAL_EXIT_STATUS"

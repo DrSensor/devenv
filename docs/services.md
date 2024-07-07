@@ -1,6 +1,6 @@
 # Services
 
-[processes](processes) are a low-level interface to starting a tool,
+[processes](processes.md) are a low-level interface to starting a tool,
 while services provide a higher level configuration.
 
 Here's an example starting PostgreSQL with a few extensions:
@@ -29,6 +29,17 @@ Services start like processes with `devenv up`:
 
 $ devenv up
 Starting processes ...
+```
+
+Service states are persisted to directories in `$DEVENV_STATE`. When you adjust options like the above used `initialScript`, you will have to delete the service's directory for changes to take effect on next `devenv up`.
+
+## Services in the background
+
+Services start in the foreground by default. If you want to start services up in the background, you can pass the `-d` flag:
+
+```shell-session
+
+$ devenv up -d
 ```
 
 ## Supported services

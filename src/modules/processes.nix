@@ -53,7 +53,7 @@ in
       implementation = lib.mkOption {
         type = types.enum [ "honcho" "overmind" "process-compose" "hivemind" ];
         description = "The implementation used when performing ``devenv up``.";
-        default = "honcho";
+        default = "process-compose";
         example = "overmind";
       };
 
@@ -65,9 +65,16 @@ in
         '';
         default = {
           version = "0.5";
-          port = 9999;
+          unix-socket = "${config.devenv.runtime}/pc.sock";
           tui = true;
         };
+        defaultText = lib.literalExpression ''
+          {
+            version = "0.5";
+            unix-socket = "''${config.devenv.runtime}/pc.sock";
+            tui = true;
+          }
+        '';
         example = {
           version = "0.5";
           log_location = "/path/to/combined/output/logfile.log";
@@ -131,28 +138,24 @@ in
 
       ${config.processManagerCommand}
 
-      if [[ ! -d "$DEVENV_STATE" ]]; then
-        mkdir -p "$DEVENV_STATE"
-      fi
+      backgroundPID=$!
 
-      stop_up() {
+      down() {
         echo "Stopping processes..."
-        kill -TERM $(cat "$DEVENV_STATE/devenv.pid")
-        rm "$DEVENV_STATE/devenv.pid"
-        wait
+        kill -TERM $backgroundPID
+        wait $backgroundPID
         ${config.process.after}
         echo "Processes stopped."
+        rm -rf ${config.devenv.runtime}
       }
 
-      trap stop_up SIGINT SIGTERM
-
-      echo $! > "$DEVENV_STATE/devenv.pid"
+      trap down SIGINT SIGTERM
 
       wait
     '';
 
     ci = [ config.procfileScript ];
 
-    infoSections."processes" = lib.mapAttrsToList (name: process: "${name}: ${process.exec}") config.processes;
+    infoSections."processes" = lib.mapAttrsToList (name: process: "${name}: exec ${pkgs.writeShellScript name process.exec}") config.processes;
   };
 }

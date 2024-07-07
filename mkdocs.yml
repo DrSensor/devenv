@@ -5,12 +5,13 @@ repo_name: 'cachix/devenv'
 repo_url: 'https://github.com/cachix/devenv'
 edit_uri: 'edit/main/docs'
 extra_css:
-  - assets/extra.css
+  - assets/output.css
 theme:
   name: material
   logo: assets/logo.webp
   favicon: assets/favicon.svg
-
+  icon:
+    repo: fontawesome/brands/github
   custom_dir: docs/overrides
   palette:
     primary: white
@@ -18,13 +19,16 @@ theme:
   features:
     - tabs
     - instant
+    - search.share
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.expand
     - navigation.instant
     - navigation.tracking
     - content.code.annotate
     - content.code.copy
     - content.tabs.link
+    - content.action.edit
 nav:
   - Home: index.md
   - Documentation:
@@ -38,7 +42,9 @@ nav:
       - Processes: processes.md
       - Services: services.md
       - Containers: containers.md
+      - Binary Caching: binary-caching.md
       - Pre-Commit Hooks: pre-commit-hooks.md
+      - Tests: tests.md
       - Common Patterns: common-patterns.md
     - Writing devenv.yaml:
       - Inputs: inputs.md
@@ -46,7 +52,7 @@ nav:
     - Overview:
       - Automatic Shell Activation: automatic-shell-activation.md
       - Garbage Collection: garbage-collection.md
-    - Guides: 
+    - Guides:
       - Using With Flakes: guides/using-with-flakes.md
       - Using With flake.parts: guides/using-with-flake-parts.md
     - Integrations:
@@ -54,9 +60,11 @@ nav:
       - GitHub Actions: integrations/github-actions.md
       - Codespaces / devcontainer: integrations/codespaces-devcontainer.md
       - Difftastic: integrations/difftastic.md
+      - Android: integrations/android.md
     - Examples: examples.md
     - Editor Support:
       - VSCode: editor-support/vscode.md
+      - PhpStorm: editor-support/phpstorm.md
     - Roadmap: roadmap.md
     - Reference:
       - devenv.yaml: reference/yaml-options.md
@@ -66,30 +74,31 @@ nav:
   - Community:
       - Get Involved: community/get-involved.md
       - Contributing: community/contributing.md
+
 plugins:
+  blog: {}
   search: {}
   markdownextradata: {}
   include-markdown: {}
   social:
-    cards_color:
-      fill: "#FBFBFB"
-      text: "#425C82"
+    cards_layout_options:
+      background_color: "#FBFBFB"
+      color: "#425C82"
   rss:
-    match_path: blog/posts/.* 
-    date_from_meta:
-      as_creation: date
-      as_update: date
-
+     use_git: false
+     match_path: blog/posts/.*
+     date_from_meta:
+       as_creation: date
+       as_update: date
 extra:
   social:
-    - icon: fontawesome/brands/twitter 
+    - icon: fontawesome/brands/twitter
       link: https://twitter.com/cachix_org
-    - icon: fontawesome/brands/github 
+    - icon: fontawesome/brands/github
       link: https://github.com/cachix/devenv
-    - icon: fontawesome/brands/discord 
+    - icon: fontawesome/brands/discord
       link: https://discord.gg/naMgvexb6q
-  devenv:
-    version: 0.6.3
+
 markdown_extensions:
   - tables
   - admonition
@@ -100,5 +109,6 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.tabbed:
-      alternate_style: true 
+      alternate_style: true
   - pymdownx.tasklist
+  - pymdownx.tilde

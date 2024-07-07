@@ -15,7 +15,7 @@ let
 
   formattedConfig = pkgs.runCommand "formattedCaddyFile" { } ''
     cp --no-preserve=mode,ownership ${configFile} $out
-    ${cfg.package}/bin/caddy fmt --overwrite $out
+    ${cfg.package}/bin/${cfg.package.meta.mainProgram} fmt --overwrite $out
   '';
 
   tlsConfig = {
@@ -28,7 +28,7 @@ let
   };
 
   adaptedConfig = pkgs.runCommand "caddy-config-adapted.json" { } ''
-    ${cfg.package}/bin/caddy adapt \
+    ${cfg.package}/bin/${cfg.package.meta.mainProgram} adapt \
       --config ${formattedConfig} --adapter ${cfg.adapter} > $out
   '';
   tlsJSON = pkgs.writeText "tls.json" (builtins.toJSON tlsConfig);
@@ -89,6 +89,12 @@ in
     config = mkOption {
       default = "";
       example = ''
+        # Global options block
+        {
+          debug
+        }
+
+        # Site block
         example.com {
           encode gzip
           log
@@ -98,6 +104,10 @@ in
       type = types.lines;
       description = ''
         Verbatim Caddyfile to use.
+
+        Refer to [https://caddyserver.com/docs/caddyfile](https://caddyserver.com/docs/caddyfile)
+        for more information.
+
         Caddy v2 supports multiple config formats via adapters (see [`services.caddy.adapter`](#servicescaddyconfig)).
       '';
     };
@@ -158,6 +168,7 @@ in
 
     dataDir = mkOption {
       default = "${config.env.DEVENV_STATE}/caddy";
+      defaultText = literalExpression ''"${config.env.DEVENV_STATE}/caddy"'';
       type = types.path;
       description = ''
         The data directory, for storing certificates. Before 17.09, this
@@ -179,6 +190,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    processes.caddy.exec = "XDG_DATA_HOME=${cfg.dataDir}/data XDG_CONFIG_HOME=${cfg.dataDir}/config ${cfg.package}/bin/caddy run ${optionalString cfg.resume "--resume"} --config ${configJSON}";
+    processes.caddy.exec = ''XDG_DATA_HOME="${cfg.dataDir}/data" XDG_CONFIG_HOME="${cfg.dataDir}/config" ${cfg.package}/bin/${cfg.package.meta.mainProgram} run ${optionalString cfg.resume "--resume"} --config ${configJSON}'';
   };
 }

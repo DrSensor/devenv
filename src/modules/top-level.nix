@@ -1,7 +1,6 @@
 { config, pkgs, lib, ... }:
 let
   types = lib.types;
-  mkNakedShell = pkgs.callPackage ./mkNakedShell.nix { };
   # Returns a list of all the entries in a folder
   listEntries = path:
     map (name: path + "/${name}") (builtins.attrNames (builtins.readDir path));
@@ -67,6 +66,49 @@ in
       default = [ ];
     };
 
+    stdenv = lib.mkOption {
+      type = types.package;
+      description = "The stdenv to use for the developer environment.";
+      default = pkgs.stdenv;
+    };
+
+    unsetEnvVars = lib.mkOption {
+      type = types.listOf types.str;
+      description = "A list of removed environment variables to make the shell/direnv more lean.";
+      # manually determined with knowledge from https://nixos.wiki/wiki/C
+      default = [
+        "HOST_PATH"
+        "NIX_BUILD_CORES"
+        "__structuredAttrs"
+        "buildInputs"
+        "buildPhase"
+        "builder"
+        "depsBuildBuild"
+        "depsBuildBuildPropagated"
+        "depsBuildTarget"
+        "depsBuildTargetPropagated"
+        "depsHostHost"
+        "depsHostHostPropagated"
+        "depsTargetTarget"
+        "depsTargetTargetPropagated"
+        "dontAddDisableDepTrack"
+        "doCheck"
+        "doInstallCheck"
+        "nativeBuildInputs"
+        "out"
+        "outputs"
+        "patches"
+        "phases"
+        "preferLocalBuild"
+        "propagatedBuildInputs"
+        "propagatedNativeBuildInputs"
+        "shell"
+        "shellHook"
+        "stdenv"
+        "strictDeps"
+      ];
+    };
+
     shell = lib.mkOption {
       type = types.package;
       internal = true;
@@ -100,7 +142,7 @@ in
       default = [ ];
       example = [ "you should fix this or that" ];
       description = ''
-        This option allows modules to express warnings about theV
+        This option allows modules to express warnings about the
         configuration. For example, `lib.mkRenamedOptionModule` uses this to
         display a warning message when a renamed option is used.
       '';
@@ -110,6 +152,7 @@ in
       root = lib.mkOption {
         type = types.str;
         internal = true;
+        default = builtins.getEnv "PWD";
       };
 
       dotfile = lib.mkOption {
@@ -120,6 +163,39 @@ in
       state = lib.mkOption {
         type = types.str;
         internal = true;
+      };
+
+      runtime = lib.mkOption {
+        type = types.str;
+        internal = true;
+        # The path has to be
+        # - unique to each DEVENV_STATE to let multiple devenv environments coexist
+        # - deterministic so that it won't change constantly
+        # - short so that unix domain sockets won't hit the path length limit
+        # - free to create as an unprivileged user across OSes
+        default =
+          let
+            runtimeEnv = builtins.getEnv "DEVENV_RUNTIME";
+
+            hashedRoot = builtins.hashString "sha256" config.devenv.state;
+
+            # same length as git's abbreviated commit hashes
+            shortHash = builtins.substring 0 7 hashedRoot;
+          in
+          if runtimeEnv != ""
+          then runtimeEnv
+          else "${config.devenv.tmpdir}/devenv-${shortHash}";
+      };
+
+      tmpdir = lib.mkOption {
+        type = types.str;
+        internal = true;
+        default =
+          let
+            xdg = builtins.getEnv "XDG_RUNTIME_DIR";
+            tmp = builtins.getEnv "TMPDIR";
+          in
+          if xdg != "" then xdg else if tmp != "" then tmp else "/tmp";
       };
 
       profile = lib.mkOption {
@@ -137,6 +213,9 @@ in
     ./update-check.nix
     ./containers.nix
     ./debug.nix
+    ./lib.nix
+    ./tests.nix
+    ./cachix.nix
   ]
   ++ (listEntries ./languages)
   ++ (listEntries ./services)
@@ -145,28 +224,31 @@ in
   ;
 
   config = {
-    # TODO: figure out how to get relative path without impure mode
-    devenv.root = lib.mkDefault (
-      let
-        pwd = builtins.getEnv "PWD";
-      in
-      if pwd == "" then
-        throw ''
+    assertions = [
+      {
+        assertion = config.devenv.root != "";
+        message = ''
           devenv was not able to determine the current directory.
-          Make sure Nix runs with the `--impure` flag.
 
-          See https://devenv.sh/guides/using-with-flakes/
-        ''
-      else pwd
-    );
-    devenv.dotfile = config.devenv.root + "/.devenv";
-    devenv.state = config.devenv.dotfile + "/state";
+          See https://devenv.sh/guides/using-with-flakes/ how to use it with flakes.
+        '';
+      }
+    ];
+    # use builtins.toPath to normalize path if root is "/" (container)
+    devenv.state = builtins.toPath (config.devenv.dotfile + "/state");
+    devenv.dotfile = lib.mkDefault (builtins.toPath (config.devenv.root + "/.devenv"));
     devenv.profile = profile;
 
     env.DEVENV_PROFILE = config.devenv.profile;
     env.DEVENV_STATE = config.devenv.state;
+    env.DEVENV_RUNTIME = config.devenv.runtime;
     env.DEVENV_DOTFILE = config.devenv.dotfile;
     env.DEVENV_ROOT = config.devenv.root;
+
+    packages = [
+      # needed to make sure we can load libs
+      pkgs.pkg-config
+    ];
 
     enterShell = ''
       export PS1="\[\e[0;34m\](devenv)\[\e[0m\] ''${PS1-}"
@@ -189,25 +271,32 @@ in
         echo "Please install direnv: https://direnv.net/docs/installation.html"
       fi
 
-      mkdir -p .devenv
-      rm -f .devenv/profile
-      ln -s ${profile} .devenv/profile
+      mkdir -p "$DEVENV_STATE"
+      if [ ! -L "$DEVENV_DOTFILE/profile" ] || [ "$(${pkgs.coreutils}/bin/readlink $DEVENV_DOTFILE/profile)" != "${profile}" ]
+      then
+        ln -snf ${profile} "$DEVENV_DOTFILE/profile"
+      fi
+      unset ${lib.concatStringsSep " " config.unsetEnvVars}
+
+      mkdir -p ${lib.escapeShellArg config.devenv.runtime}
+      ln -snf ${lib.escapeShellArg config.devenv.runtime} ${lib.escapeShellArg config.devenv.dotfile}/run
     '';
 
     shell = performAssertions (
-      mkNakedShell {
+      (pkgs.mkShell.override { stdenv = config.stdenv; }) ({
         name = "devenv-shell";
-        env = config.env;
-        profile = profile;
-        shellHook = config.enterShell;
-        debug = config.devenv.debug;
-      }
+        packages = config.packages;
+        shellHook = ''
+          ${lib.optionalString config.devenv.debug "set -x"}
+          ${config.enterShell}
+        '';
+      } // config.env)
     );
 
     infoSections."env" = lib.mapAttrsToList (name: value: "${name}: ${toString value}") config.env;
     infoSections."packages" = builtins.map (package: package.name) (builtins.filter (package: !(builtins.elem package.name (builtins.attrNames config.scripts))) config.packages);
 
-    ci = [ config.shell.inputDerivation ];
-    ciDerivation = pkgs.runCommand "ci" { } ("ls " + toString config.ci + " && touch $out");
+    ci = [ config.shell ];
+    ciDerivation = pkgs.runCommand "ci" { } "echo ${toString config.ci} > $out";
   };
 }

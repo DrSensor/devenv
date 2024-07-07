@@ -40,7 +40,7 @@ in {
 { pkgs, ... }: {
   packages = [
     pkgs.git
-  ] ++ lib.optionals !config.container.isBuilding [
+  ] ++ lib.optionals (!config.container.isBuilding) [
     pkgs.haskell-language-server
   ];
 }
@@ -54,5 +54,19 @@ in {
     foobar=1
     echo ''${foobar}
   '';
+}
+```
+
+# How to install packages only on Linux or macOS?
+
+```nix
+{ pkgs, lib, ... }: {
+  packages = [
+    pkgs.ncdu
+  ] ++ lib.optionals pkgs.stdenv.isLinux [
+    pkgs.inotify-tools
+  ] ++ lib.optionals pkgs.stdenv.isDarwin [
+    pkgs.darwin.apple_sdk.frameworks.Security
+  ];
 }
 ```

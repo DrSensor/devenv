@@ -6,28 +6,39 @@ We have a rule that new features need to come with documentation and tests (`dev
 
 ## Preparing the `devenv` development environment
 
-1. Follow the [installation instructions for Nix and Cachix](../../getting-started/#installation).
+1. Follow the [installation instructions for Nix and Cachix](../../getting-started/#installation) and [install direnv](../../automatic-shell-activation/).
 
 2. `git clone https://github.com/cachix/devenv.git`
 
 3. `cd devenv`
 
-4. To build the project, run `nix-build`.
+4. To build the project, run `direnv allow .` or build devenv manually using
+`nix build .#devenv` which allows to run development version of devenv outside
+of source code directory by calling `<PATH-TO-DEVENV-SOURCE-CODE>/result/bin/devenv`.
 
-5. `./result/bin/devenv shell`
+## Creating development project
 
-6. Once you have made changes, run `./result/bin/devenv shell` again.
+1. `mkdir devenv-project && cd devenv-project`
 
-To automate this workflow, [install and use direnv](../../automatic-shell-activation/).
+2. `<PATH-TO-DEVENV-SOURCE-CODE>/result/bin/devenv init`
+
+3. Add devenv input pointing to local source directory to `devenv.yaml`
+  ```
+  devenv:
+    url: path:<PATH-TO-DEVENV-SOURCE-CODE>?dir=src/modules
+  ```
+
+4. `<PATH-TO-DEVENV-SOURCE-CODE>/result/bin/devenv update`
 
 ## Repository structure
 
-- The `devenv` CLI is in `src/devenv.nix`.
-- The `flake.nix` auto-generation logic lies in `src/flake.nix`.
+- The `devenv` CLI is in `devenv/src/main.rs`.
+- The `flake.nix` auto-generation logic lies in `devenv/src/flake.tmpl.nix`.
 - All modules related to `devenv.nix` are in `src/modules/`.
-- Examples are automatically tested on CI and are the best way to work on developing new modules, see `examples/`.
+- Examples are automatically tested on CI and are the best way to work on developing new modules, see `examples/` and `tests/`
 - Documentation is in `docs/`.
 - To run a development server, run `devenv up`.
+- To run a test, run `devenv-run-tests --only <example-name> examples`.
 
 ## Contributing language improvements
 
